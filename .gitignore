@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+
+# Data & Storage
+node_storage/
+relay_storage/
+*.bin
+*.txt
+!requirements.txt
+
+# IDEs
+.vscode/
+.idea/

@@ -1,0 +1,380 @@
+from fastapi import FastAPI, Request, UploadFile, File, Form
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+import time
+import os
+import random
+from blockchain import Blockchain
+
+# Initialize Blockchain
+blockchain = Blockchain()
+
+active_nodes = {}  # {ip:port: timestamp}
+
+# ─────────────────────────────────────────────
+# DISTRIBUTED ALGORITHMS STATE
+# ─────────────────────────────────────────────
+# Lamport Logical Clock: A simple algorithm used to determine the order of events in a distributed system.
+# It ensures that if event A happens before event B, then the timestamp of A is less than the timestamp of B.
+lamport_clock = 0
+
+def increment_clock(received_clock=None):
+    """
+    Update Lamport Logical Clock:
+    - Before each operation: lamport_clock += 1
+    - On receiving a message: lamport_clock = max(lamport_clock, received_clock) + 1
+    """
+    global lamport_clock
+    if received_clock is not None:
+        lamport_clock = max(lamport_clock, received_clock) + 1
+    else:
+        lamport_clock += 1
+    return lamport_clock
+
+# Ricart-Agrawala Mutual Exclusion: A distributed algorithm that ensures only one node enters a critical section at a time.
+# It requires a node to request permission from all other nodes and wait for their replies.
+# {node_id: {"requesting": bool, "replies": set(node_id), "timestamp": int}}
+node_states = {}
+TOTAL_NODES = 3
+event_logs = []
+
+def log_event(message):
+    """Add a timestamped event log"""
+    global lamport_clock
+    log_entry = {
+        "timestamp": time.strftime("%H:%M:%S"),
+        "lamport": lamport_clock,
+        "event": message
+    }
+    event_logs.append(log_entry)
+    if len(event_logs) > 50:
+        event_logs.pop(0)
+    print(f"[{log_entry['timestamp']}] (LC:{lamport_clock}) {message}")
+
+app = FastAPI()
+
+# Enable CORS for cross-laptop communication
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
+
+# ─────────────────────────────────────────────
+# NODE REGISTRY LOGIC
+# ─────────────────────────────────────────────
+def register_node(ip: str, port: int):
+    """Register storage node"""
+    # Relay mode: port 0 means no direct connection, use ID only
+    node = ip if port == 0 else f"{ip}:{port}"
+    active_nodes[node] = time.time()
+    print(f"[+] Node Registered: {node}")
+    return list(active_nodes.keys())
+
+def get_live_nodes():
+    """Get active nodes (prune > 5 mins old)"""
+    current = time.time()
+    dead = [n for n, ts in active_nodes.items() if current - ts > 30]
+    for n in dead:
+        del active_nodes[n]
+    return list(active_nodes.keys())
+
+# ---------------------------------------------------------
+# RELAY & POLLING SYSTEM (Firewall Bypass)
+# ---------------------------------------------------------
+
+RELAY_DIR = "relay_storage"
+os.makedirs(RELAY_DIR, exist_ok=True)
+
+REPLICATION_FACTOR = 2  # Store each chunk on 2 nodes
+
+# {node_id: [task_1, task_2]}
+node_tasks = {}
+# Track pending confirmations: {chunk_name: set(node_ids)}
+relay_pending = {}
+# Round-robin counter for distributing chunks across nodes
+rr_counter = 0
+
+@app.post("/api/relay_upload")
+async def relay_upload(file: UploadFile = File(...), chunk_name: str = Form(...)):
+    """Frontend uploads chunk here. We queue it for multiple Nodes (replication)."""
+    try:
+        # 1. Save to temp relay storage
+        file_path = os.path.join(RELAY_DIR, chunk_name)
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        # 2. Assign to nodes (round-robin + replication)
+        nodes = get_live_nodes()
+        if not nodes:
+            return {"status": "error", "message": "No active nodes"}
+        
+        global rr_counter
+        num_replicas = min(REPLICATION_FACTOR, len(nodes))
+        
+        # Round-robin: start from different node for each chunk
+        target_nodes = []
+        for j in range(num_replicas):
+            idx = (rr_counter + j) % len(nodes)
+            target_nodes.append(nodes[idx])
+        rr_counter += 1
+        
+        # 3. Queue store task for each target node
+        relay_pending[chunk_name] = set(target_nodes)
+        for target in target_nodes:
+            if target not in node_tasks:
+                node_tasks[target] = []
+            node_tasks[target].append({
+                "type": "store",
+                "chunk_name": chunk_name
+            })
+        
+        return {"status": "queued", "target_nodes": target_nodes}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/poll_tasks")
+def poll_tasks(node_id: str):
+    """Node polls this to see if it has work."""
+    if node_id in node_tasks and node_tasks[node_id]:
+        # Return tasks and clear them (pop)
+        tasks = node_tasks[node_id]
+        node_tasks[node_id] = [] # Clear queue once fetched
+        return {"tasks": tasks}
+    return {"tasks": []}
+
+@app.get("/api/download_relay/{chunk_name}")
+def download_relay(chunk_name: str):
+    """Download chunk from relay storage. Returns 404 if not ready."""
+    file_path = os.path.join(RELAY_DIR, chunk_name)
+    if os.path.exists(file_path):
+        return FileResponse(file_path)
+    return JSONResponse({"error": "File not found"}, status_code=404)
+
+@app.post("/api/confirm_task")
+def confirm_task(node_id: str, chunk_name: str, status: str):
+    """Node confirms it saved the file. Delete relay copy only when ALL replicas confirm."""
+    if status == "success":
+        if chunk_name in relay_pending:
+            relay_pending[chunk_name].discard(node_id)
+            if len(relay_pending[chunk_name]) == 0:
+                # All replicas confirmed — safe to delete
+                file_path = os.path.join(RELAY_DIR, chunk_name)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                del relay_pending[chunk_name]
+                print(f"[+] All replicas confirmed for {chunk_name}. Relay cleaned.")
+        return {"status": "acknowledged"}
+    return {"status": "ok"}
+
+@app.post("/api/request_retrieval")
+async def request_retrieval_endpoint(request: Request):
+    try:
+        data = await request.json()
+        chunk_name = data.get("chunk_name")
+        node_id = data.get("node_id")
+        
+        if not chunk_name or not node_id:
+             return JSONResponse({"status": "error", "message": "Missing params"}, status_code=400)
+
+        if node_id not in node_tasks:
+            node_tasks[node_id] = []
+        
+        # Add task (avoid duplicates if possible, but simpler to just append)
+        node_tasks[node_id].append({"type": "retrieve", "chunk_name": chunk_name})
+        return JSONResponse({"status": "queued"})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+@app.post("/api/relay_push")
+async def relay_push(file: UploadFile = File(...), chunk_name: str = Form(...)):
+    """Node pushes chunk here for Frontend to download."""
+    try:
+        file_path = os.path.join(RELAY_DIR, chunk_name)
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        return {"status": "received"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# ─────────────────────────────────────────────
+# API ROUTES
+# ─────────────────────────────────────────────
+@app.post("/api/register")
+async def api_register(request: Request):
+    data = await request.json()
+    ip = data.get("ip", "")
+    port = data.get("port", 25565)
+    node_id = ip if port == 0 else f"{ip}:{port}"
+    nodes = register_node(ip, int(port))
+    
+    # Initialize node state
+    if node_id not in node_states:
+        node_states[node_id] = {"requesting": False, "replies": set(), "timestamp": 0}
+    
+    return JSONResponse({"status": "registered", "nodes": nodes})
+
+# ─────────────────────────────────────────────
+# RICART–AGRAWALA & LAMPORT ENDPOINTS
+# ─────────────────────────────────────────────
+
+@app.get("/api/status")
+def api_status():
+    """Get node states, logical clock, and logs"""
+    return {
+        "lamport_clock": lamport_clock,
+        "nodes": get_live_nodes(),
+        "node_states": {node: {"requesting": state["requesting"], "replies": len(state["replies"])} for node, state in node_states.items()},
+        "logs": event_logs
+    }
+
+@app.post("/api/request_cs")
+async def request_cs(request: Request):
+    """Node requests critical section"""
+    data = await request.json()
+    node_id = data.get("node_id")
+    received_clock = data.get("timestamp")
+    
+    increment_clock(received_clock)
+    
+    if node_id in node_states:
+        node_states[node_id]["requesting"] = True
+        node_states[node_id]["timestamp"] = lamport_clock
+        node_states[node_id]["replies"] = {node_id} # self reply
+        log_event(f"REQUEST sent by {node_id}")
+        return {"status": "request_received", "lamport": lamport_clock}
+    return JSONResponse({"status": "error", "message": "Node not registered"}, status_code=400)
+
+@app.post("/api/reply_cs")
+async def reply_cs(request: Request):
+    """Node replies to a critical section request"""
+    data = await request.json()
+    from_node = data.get("from_node")
+    target_node = data.get("target_node")
+    received_clock = data.get("timestamp")
+    
+    increment_clock(received_clock)
+    
+    if target_node in node_states:
+        node_states[target_node]["replies"].add(from_node)
+        log_event(f"REPLY received by {target_node} from {from_node}")
+        return {"status": "reply_received", "lamport": lamport_clock}
+    return JSONResponse({"status": "error", "message": "Target node not found"}, status_code=400)
+
+@app.post("/api/release_cs")
+async def release_cs(request: Request):
+    """Node releases critical section"""
+    data = await request.json()
+    node_id = data.get("node_id")
+    received_clock = data.get("timestamp")
+    
+    increment_clock(received_clock)
+    
+    if node_id in node_states:
+        node_states[node_id]["requesting"] = False
+        node_states[node_id]["replies"] = set()
+        log_event(f"Critical section released by {node_id}")
+        return {"status": "released", "lamport": lamport_clock}
+    return JSONResponse({"status": "error", "message": "Node not found"}, status_code=400)
+
+@app.get("/api/get_nodes")
+async def api_get_nodes():
+    return JSONResponse(get_live_nodes())
+
+@app.post("/api/add_transaction")
+async def api_add_transaction(request: Request):
+    data = await request.json()
+    # Validate fields
+    required = ['owner', 'file_hash', 'file_name', 'locations']
+    if not all(k in data for k in required):
+        return JSONResponse({"error": "Missing fields"}, status_code=400)
+    
+    node_id = data.get('node_id', 'Unknown Node')
+    received_clock = data.get('timestamp', 0)
+    
+    # Update clock before operation
+    increment_clock(received_clock)
+    
+    # Add to blockchain
+    index = blockchain.new_transaction(
+        data['owner'], data['file_hash'],
+        data['file_name'], data['locations'],
+        node_id=node_id,
+        lamport_clock=lamport_clock
+    )
+    # Mine block with Proof of Work & Persist
+    block = blockchain.mine_block(
+        node_id=node_id,
+        lamport_clock=lamport_clock,
+        operation="Upload"
+    )
+    blockchain.save_to_repo()
+    
+    log_event(f"Block added to chain by {node_id}")
+    
+    return JSONResponse({
+        "message": f"Transaction added to Block {block['index']}",
+        "proof": block['proof'],
+        "lamport": lamport_clock
+    }, status_code=201)
+
+@app.get("/api/get_file/{file_hash}")
+async def api_get_file(file_hash: str):
+    result = blockchain.get_file_location(file_hash)
+    if result:
+        return JSONResponse(result)
+    return JSONResponse({"error": "File not found"}, status_code=404)
+
+@app.get("/api/chain")
+async def api_chain():
+    return JSONResponse({
+        "chain": blockchain.chain,
+        "length": len(blockchain.chain),
+        "files": len(blockchain.get_all_files())
+    })
+
+@app.get("/api/validate")
+async def api_validate():
+    """Validate the entire blockchain for tampering"""
+    valid, bad_index = blockchain.validate_chain()
+    return JSONResponse({
+        "valid": valid,
+        "blocks": len(blockchain.chain),
+        "tampered_at": bad_index if not valid else None
+    })
+
+@app.post("/api/sync_chain")
+async def api_sync_chain(request: Request):
+    """Node pushes its chain. Longest valid chain wins."""
+    try:
+        data = await request.json()
+        incoming_chain = data.get("chain", [])
+        
+        if not incoming_chain:
+            return JSONResponse({"status": "error", "message": "Empty chain"}, status_code=400)
+        
+        replaced = blockchain.resolve_chain(incoming_chain)
+        
+        if replaced:
+            blockchain.save_to_repo()
+            return JSONResponse({
+                "status": "adopted",
+                "new_length": len(blockchain.chain)
+            })
+        else:
+            return JSONResponse({
+                "status": "rejected",
+                "reason": "Our chain is longer or equal",
+                "our_length": len(blockchain.chain)
+            })
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+if __name__ == "__main__":
+    # Internal port for API (not exposed publically directly)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
