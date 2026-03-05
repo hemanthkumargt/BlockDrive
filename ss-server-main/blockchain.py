@@ -291,6 +291,7 @@ class Blockchain:
                     'file_hash': tx['file_hash'],
                     'owner': tx['owner'],
                     'chunks': len(tx['locations']),
+                    'locations': tx['locations'],
                     'timestamp': tx.get('timestamp', block['timestamp'])
                 })
         return files

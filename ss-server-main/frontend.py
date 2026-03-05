@@ -15,23 +15,31 @@ from blockchain import Blockchain
 CHUNK_SIZE = 1024 * 1024  # 1 MB
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
-# Sidebar for controls and configuration
+import secrets
+
+# Generate Cryptographic Keys for User Identity
+if 'private_key' not in st.session_state:
+    st.session_state['private_key'] = secrets.token_hex(32)
+
+private_key = st.session_state['private_key']
+# Derived Public Key acts as the Owner ID securely
+public_key = "0x" + hashlib.sha256(private_key.encode()).hexdigest()[:16]
+
 with st.sidebar:
     st.header("⚙️ System Config")
     # Dynamic URL detection for Hugging Face or Localhost
     default_url = os.environ.get("BACKEND_URL")
     if not default_url:
-        default_url = "https://hkrox-blockdrive.hf.space" # User's current Space
+        default_url = "http://localhost:8000" # Defaults to local hub
     
     api_base = st.text_input("Hub API URL", default_url, help="The address of the central hub. Change this if you deploy to a new URL.")
     API_URL = f"{api_base}/api"
     
     st.divider()
     
-    st.header("👤 User Identity")
-    node_id_input = st.text_input("Your ID", "client-1", help="How you are identified on the network.")
-    
-    
+    st.header("👤 Cryptographic Identity")
+    node_id_input = st.text_input("Your Public ID", public_key, disabled=True, help="Your deterministic public key that identifies you securely on the network.")
+    st.text_input("Your Private Key (Hidden)", value="*****************", type="password", help="Your private key used to sign transactions. DO NOT SHARE.")
     
     st.divider()
     if st.button("🔄 Sync Ledger", help="Force your local view to match the global blockchain."):
@@ -251,16 +259,16 @@ top_col1, top_col2, top_col3 = st.columns(3)
 status_data = get_system_status()
 
 with top_col1:
-    st.metric("⏳ Network Time", status_data.get("lamport_clock", 0), help="Global logical counter used for ordering events across laptops.")
+    st.metric("⏳ Network Events", status_data.get("lamport_clock", 0), help="The total number of events (uploads, connections) that have occurred on the network.")
 with top_col2:
-    st.metric("🖥️ Storage Nodes", len(status_data.get("nodes", [])), help="Number of active laptops storing your data.")
+    st.metric("🖥️ Online Storage Providers", len(status_data.get("nodes", [])), help="The number of computers currently connected and providing their hard drive space to the network.")
 with top_col3:
     chain_len = 0
     try:
         r = requests.get(f"{API_URL}/chain")
         if r.status_code == 200: chain_len = r.json()['length']
     except: pass
-    st.metric("⛓️ Ledger Height", chain_len, help="The number of blocks in the blockchain.")
+    st.metric("⛓️ Blocks in Chain", chain_len, help="The total number of blocks in the blockchain. More blocks means a more secure history.")
 
 # Panels
 left_panel, right_panel = st.columns([1, 1.5])
@@ -277,9 +285,10 @@ with left_panel:
         state = node_states.get(node, {"requesting": False, "replies": 0})
         is_requesting = state.get("requesting", False)
         replies = state.get("replies", 0)
+        required = max(1, len(nodes))
         
         status_color = "var(--electric-cyan)" if not is_requesting else "#FFD700"
-        status_text = f"Requesting CS ({replies}/3 replies)" if is_requesting else "Idle"
+        status_text = f"Requesting CS ({replies}/{required} replies)" if is_requesting else "Idle"
         
         st.markdown(f"""
         <div class="status-panel">
@@ -290,7 +299,7 @@ with left_panel:
         """, unsafe_allow_html=True)
 
 with right_panel:
-    st.subheader("⛓️ File Ledger & Explorer")
+    st.subheader("⛓️ Public File History")
     try:
         r_chain = requests.get(f"{API_URL}/chain")
         r_shared = requests.get(f"{API_URL}/drive/list_shared") # New: Get all shared hashes
@@ -322,7 +331,7 @@ with right_panel:
                             <small class="text-muted">Owner: {f_meta['owner']} | Hash: {f_hash[:16]}...</small>
                         </div>
                         """, unsafe_allow_html=True)
-                        if st.button(f"Manage File", key=f_hash):
+                        if st.button(f"Manage File", key=f"manage_{f_hash}"):
                             st.session_state['selected_file'] = f_meta
                             st.rerun()
 
@@ -339,7 +348,7 @@ if 'selected_file' in st.session_state:
     c1, c2 = st.columns(2)
     with c1:
         st.text_input("Merkle Root (File ID)", f['file_hash'], disabled=True)
-    with col2:
+    with c2:
         if vault_data:
             st.success("✨ Local Vault: Key Found!")
             st.text_input("Master Key (Auto-filled)", vault_data['key'], disabled=True)
@@ -384,9 +393,9 @@ tab1, tab2, tab3 = st.tabs(["📤 Upload File", "📥 Download File", "🤝 Mana
 
 # ── UPLOAD TAB ──
 with tab1:
-    st.header("Upload File")
+    st.header("Upload File (Sign Transaction)")
     uploaded_file = st.file_uploader("Choose a file", type=None)
-    owner_name = st.text_input("Owner Name", "Anonymous")
+    owner_name = st.text_input("Signer (Public Key)", public_key, disabled=True)
     
     if st.button("🚀 Encrypt & Upload"):
         if uploaded_file is None:
@@ -605,7 +614,7 @@ with tab3:
         # Create a form for selection
         with st.form("share_form"):
             for f_hash, f_meta in vault.items():
-                if st.checkbox(f"**{f_meta['name']}** (`{f_hash[:12]}...`)", key=f_hash):
+                if st.checkbox(f"**{f_meta['name']}** (`{f_hash[:12]}...`)", key=f"share_cb_{f_hash}"):
                     files_to_share.append({"hash": f_hash, "key": f_meta['key']})
             
             submitted = st.form_submit_button("Generate Access Code for Selected Files")

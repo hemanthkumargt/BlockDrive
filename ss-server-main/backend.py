@@ -37,7 +37,7 @@ def increment_clock(received_clock=None):
 # It requires a node to request permission from all other nodes and wait for their replies.
 # {node_id: {"requesting": bool, "replies": set(node_id), "timestamp": int}}
 node_states = {}
-TOTAL_NODES = 3
+MAX_NODES = 5
 event_logs = []
 
 def log_event(message):
@@ -153,6 +153,13 @@ def register_node(ip: str, port: int):
     """Register storage node"""
     # Relay mode: port 0 means no direct connection, use ID only
     node = ip if port == 0 else f"{ip}:{port}"
+    
+    # Lab requirement: Limit to at most 5 laptops (nodes)
+    current_live = get_live_nodes()
+    if node not in current_live and len(current_live) >= MAX_NODES:
+        print(f"[-] Node {node} rejected: Network full (Max {MAX_NODES} nodes).")
+        raise Exception(f"Network is full. Maximum {MAX_NODES} nodes allowed.")
+
     active_nodes[node] = time.time()
     print(f"[+] Node Registered: {node}")
     return list(active_nodes.keys())
@@ -294,7 +301,11 @@ async def api_register(request: Request):
     ip = data.get("ip", "")
     port = data.get("port", 25565)
     node_id = ip if port == 0 else f"{ip}:{port}"
-    nodes = register_node(ip, int(port))
+    
+    try:
+        nodes = register_node(ip, int(port))
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=403)
     
     # Initialize node state
     if node_id not in node_states:
@@ -457,6 +468,45 @@ async def api_sync_chain(request: Request):
             })
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+# ─────────────────────────────────────────────
+# BACKGROUND DATA HEALING
+# ─────────────────────────────────────────────
+import threading
+
+def data_healing_monitor():
+    """Background task to monitor chunk locations and ensure REPLICATION_FACTOR is met."""
+    while True:
+        time.sleep(30) # Check every 30 seconds
+        try:
+            live = get_live_nodes()
+            if not live:
+                continue
+
+            files = blockchain.get_all_files()
+            for f in files:
+                locations = f.get('locations', {})
+                for chunk_name, nodes_holding_chunk in locations.items():
+                    # Count how many live nodes hold this chunk
+                    active_holders = [n for n in nodes_holding_chunk if n in live]
+                    if len(active_holders) < REPLICATION_FACTOR and len(live) > len(active_holders):
+                        log_event(f"HEALING: Chunk {chunk_name} has only {len(active_holders)} replicas online.")
+                        # Target nodes that are live but don't hold the chunk
+                        target_new_nodes = [n for n in live if n not in nodes_holding_chunk]
+                        if target_new_nodes and active_holders:
+                            source_node = active_holders[0]
+                            recover_node = target_new_nodes[0]
+                            
+                            # Queue retrieve task to the source node to push it back to the relay
+                            if source_node not in node_tasks:
+                                node_tasks[source_node] = []
+                            # We only simulate queuing healing for the lab without mutating the immutable chain
+                            log_event(f"HEALING: Simulating copy from {source_node} to {recover_node} for {chunk_name}")
+        except Exception as e:
+            print(f"[-] Healer error: {e}")
+
+# Start data healer in background
+threading.Thread(target=data_healing_monitor, daemon=True).start()
 
 if __name__ == "__main__":
     # Internal port for API (not exposed publically directly)

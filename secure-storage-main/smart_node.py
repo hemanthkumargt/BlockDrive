@@ -41,7 +41,6 @@ print(f"🔗 Connecting to: {HF_SPACE_URL}")
 # ─────────────────────────────────────────────
 # Lamport Logical Clock: Ensures event ordering in a distributed system.
 lamport_clock = 0
-TOTAL_NODES = 3
 
 def increment_clock(received_clock=None):
     """
@@ -85,8 +84,10 @@ def check_cs_status():
             replies = node_state.get("replies", 0)
             
             # In Ricart-Agrawala, a node enters CS when it receives replies from ALL other nodes.
-            # In our 3-node system, this means replies >= 3 (including self).
-            return replies >= TOTAL_NODES
+            # Dynamic scaling: require replies from all currently active nodes (up to 5 for lab).
+            total_active_nodes = len(data.get("nodes", []))
+            required_replies = max(1, total_active_nodes)
+            return replies >= required_replies
     except Exception as e:
         print(f"[-] CS Status check failed: {e}")
     return False
