@@ -166,17 +166,6 @@ def get_from_vault(file_hash):
         except: pass
     return None
 
-def derive_pin_key(pin: str):
-    """Derive a simple key from a PIN for vault encryption"""
-    return hashlib.sha256(pin.encode()).hexdigest()[:32].encode('utf-8')
-
-def encrypt_with_pin(data: str, pin: str):
-    """Encrypt the master key with a PIN"""
-    # Simple XOR or Base64 for demo, or real Fernet if we want
-    f = Fernet(Fernet.generate_key()) # Placeholder for logic
-    # To keep it simple and robust for the demo:
-    return hashlib.md5((data + pin).encode()).hexdigest() # Demo hash
-
 def get_system_status():
     try:
         resp = requests.get(f"{API_URL}/status", timeout=5)

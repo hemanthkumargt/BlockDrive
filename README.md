@@ -37,7 +37,8 @@ $env:BACKEND_URL="http://your-hub-url:8000"; python smart_node.py YourNodeName
 1. **Network Discovery**: Watch nodes appear in the "Storage Nodes" panel as they connect.
 2. **Permission Request**: Observe the logs for `REQUEST` and `REPLY` events during an upload.
 3. **Ledger Consistency**: Verify that the "Network Time" (Lamport Clock) increments consistently across all nodes.
-4. **Data Retrieval**: Use the "File Ledger" to find a file and download it using the secure Merkle Root and Master Key.
+4. **Advanced Sharing**: Generate a unique, shareable access code for specific files and unlock them from another laptop instantly.
+5. **Data Retrieval**: Download the decrypted file once it has been unlocked and added to your local vault.
 
 ---
 Created by [hemanthkumargt](https://github.com/hemanthkumargt)

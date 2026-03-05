@@ -143,34 +143,6 @@ async def get_my_links(owner_id: str):
     return {"links": my_links}
 
 # ─────────────────────────────────────────────
-# SHARED VAULT LOGIC (Encrypted Key Exchange)
-# ─────────────────────────────────────────────
-# {merkle_root: {"encrypted_key": str, "pin_hash": str}}
-shared_keys = {}
-
-@app.post("/api/vault/share")
-async def share_key(request: Request):
-    data = await request.json()
-    f_hash = data.get("file_hash")
-    enc_key = data.get("encrypted_key") # The master key, encrypted with the user's PIN
-    pin_hash = data.get("pin_hash")
-    
-    shared_keys[f_hash] = {"key": enc_key, "pin": pin_hash}
-    log_event(f"Key shared for {f_hash[:10]}... (PIN protected)")
-    return {"status": "shared"}
-
-@app.post("/api/vault/retrieve")
-async def retrieve_shared_key(request: Request):
-    data = await request.json()
-    f_hash = data.get("file_hash")
-    pin_hash = data.get("pin_hash")
-    
-    entry = shared_keys.get(f_hash)
-    if entry and entry["pin"] == pin_hash:
-        return {"encrypted_key": entry["key"]}
-    return JSONResponse({"error": "Invalid PIN or file not shared"}, status_code=403)
-
-# ─────────────────────────────────────────────
 # NODE REGISTRY LOGIC
 # ─────────────────────────────────────────────
 def register_node(ip: str, port: int):
