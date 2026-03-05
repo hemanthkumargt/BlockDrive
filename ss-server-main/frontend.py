@@ -21,7 +21,7 @@ with st.sidebar:
     # Dynamic URL detection for Hugging Face or Localhost
     default_url = os.environ.get("BACKEND_URL")
     if not default_url:
-        default_url = "https://hk-blockdrive.hf.space" # User's new Space
+        default_url = "https://hkrox-blockdrive.hf.space" # User's current Space
     
     api_base = st.text_input("Hub API URL", default_url, help="The address of the central hub. Change this if you deploy to a new URL.")
     API_URL = f"{api_base}/api"
