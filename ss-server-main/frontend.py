@@ -244,8 +244,7 @@ def build_merkle_tree(chunks):
 # UI LAYOUT: DASHBOARD
 # ─────────────────────────────────────────────
 
-st.title("� Distributed Storage Hub")
-st.markdown("##### Secure Multi-Node Storage & Immutable Ledger")
+st.title("⛓️ Distributed Blockchain Storage")
 
 # Main Dashboard Layout
 top_col1, top_col2, top_col3 = st.columns(3)

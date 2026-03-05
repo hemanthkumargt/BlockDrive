@@ -104,6 +104,10 @@ async def unlock_drive(request: Request):
     
     link_data = access_links.get(access_code)
     if link_data:
+        # ONE-TIME USE: Invalidate the code immediately after use
+        del access_links[access_code]
+        log_event(f"Access code {access_code[:8]}... was used and has been invalidated.")
+        
         # Return the file hashes and their corresponding keys
         return {"files": link_data["files"], "keys": link_data["keys"], "owner_id": link_data["owner_id"]}
     
