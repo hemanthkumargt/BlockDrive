@@ -9,7 +9,10 @@ import sys
 # CONFIGURATION
 # ─────────────────────────────────────────────
 # Use environment variable for public URL, fallback to localhost for local testing
-HF_SPACE_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
+if len(sys.argv) > 2:
+    HF_SPACE_URL = sys.argv[2]
+else:
+    HF_SPACE_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
 
 NODE_ID_FILE = "node_id.txt"
 STORAGE_DIR = "node_storage"
