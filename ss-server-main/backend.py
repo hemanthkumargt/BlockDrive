@@ -179,7 +179,7 @@ def get_live_nodes():
 RELAY_DIR = "relay_storage"
 os.makedirs(RELAY_DIR, exist_ok=True)
 
-REPLICATION_FACTOR = 2  # Store each chunk on 2 nodes
+REPLICATION_FACTOR = 3  # Store each chunk on up to 3 nodes (auto-caps at available nodes)
 
 # {node_id: [task_1, task_2]}
 node_tasks = {}

@@ -9,7 +9,7 @@ import sys
 # CONFIGURATION
 # ─────────────────────────────────────────────
 # Use environment variable for public URL, fallback to localhost for local testing
-if len(sys.argv) > 2:
+if len(sys.argv) > 2 and sys.argv[2]:
     HF_SPACE_URL = sys.argv[2]
 else:
     HF_SPACE_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
@@ -18,7 +18,7 @@ NODE_ID_FILE = "node_id.txt"
 STORAGE_DIR = "node_storage"
 
 # Load or generate persistent Node ID
-if len(sys.argv) > 1:
+if len(sys.argv) > 1 and sys.argv[1]:
     NODE_ID = sys.argv[1]
 elif os.path.exists(NODE_ID_FILE):
     with open(NODE_ID_FILE, "r") as f:

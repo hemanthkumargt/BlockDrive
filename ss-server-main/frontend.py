@@ -10,6 +10,16 @@ import json
 from blockchain import Blockchain
 
 # ─────────────────────────────────────────────
+# PAGE CONFIG — Must be the FIRST Streamlit call
+# ─────────────────────────────────────────────
+st.set_page_config(
+    page_title="BlockDrive",
+    page_icon="⛓️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ─────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────
 CHUNK_SIZE = 1024 * 1024  # 1 MB
@@ -46,12 +56,6 @@ with st.sidebar:
         requests.get(f"{API_URL}/validate")
         st.success("Ledger Syncing...")
 
-st.set_page_config(
-    page_title="BlockDrive",
-    page_icon="⛓️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
 # Custom CSS for Modern 2026 Dark Theme (Deep Navy & Electric Cyan)
 st.markdown("""

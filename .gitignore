@@ -11,6 +11,8 @@ relay_storage/
 *.bin
 *.txt
 !requirements.txt
+my_vault.json
+error.txt
 
 # IDEs
 .vscode/
