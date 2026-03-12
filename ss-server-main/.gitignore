@@ -1,1 +1,10 @@
 /__pycache__
+*.bin
+*.json
+!requirements.txt
+!package.json
+node_storage/
+relay_storage/
+*.log
+error.txt
+.streamlit/

@@ -145,6 +145,17 @@ async def get_my_links(owner_id: str):
             my_links[code] = data["files"]
             
     return {"links": my_links}
+    
+@app.get("/api/drive/list_shared")
+async def list_shared():
+    """
+    Returns a list of all file hashes that are currently shared via any active access code.
+    """
+    shared = set()
+    for data in access_links.values():
+        for f_hash in data["files"]:
+            shared.add(f_hash)
+    return {"shared_hashes": list(shared)}
 
 # ─────────────────────────────────────────────
 # NODE REGISTRY LOGIC
@@ -509,5 +520,5 @@ def data_healing_monitor():
 threading.Thread(target=data_healing_monitor, daemon=True).start()
 
 if __name__ == "__main__":
-    # Internal port for API (not exposed publically directly)
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # log_level="warning" hides the spammy HTTP requests
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")

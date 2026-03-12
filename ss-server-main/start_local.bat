@@ -1,48 +1,39 @@
 @echo off
+setlocal
 echo ============================================
-echo   BlockDrive - Local Network Launcher
+echo   BlockDrive - Simple Launcher
 echo ============================================
 echo.
 
 :: Get local IP address
 for /f "tokens=4 delims= " %%a in ('route print 0.0.0.0 ^| findstr /r "0\.0\.0\.0"') do (
-    set LOCAL_IP=%%a
+    set "LOCAL_IP=%%a"
     goto :found
 )
 :found
+set "LOCAL_IP=%LOCAL_IP: =%"
 
-echo [*] Your Local Network IP: %LOCAL_IP%
+echo [*] Hub IP Address: %LOCAL_IP%
 echo.
-echo [*] Starting FastAPI Backend on port 8000...
-start "BlockDrive - Backend" cmd /k "cd /d "%~dp0" && python -m uvicorn backend:app --host 0.0.0.0 --port 8000"
 
-echo [*] Waiting for backend to start...
-timeout /t 3 /nobreak > nul
+:: 1. Start Hub (Clean)
+echo [*] Starting Backend...
+start "BlockDrive-Hub" /min cmd /c "cd /d %~dp0 && python -m uvicorn backend:app --host 0.0.0.0 --port 8000 --log-level warning"
 
-echo [*] Starting Streamlit Frontend on port 8501...
-start "BlockDrive - Frontend" cmd /k "cd /d "%~dp0" && set BACKEND_URL=http://%LOCAL_IP%:8000 && streamlit run frontend.py --server.port 8501 --server.address 0.0.0.0"
+:: 2. Start Local Storage Node (Hidden)
+timeout /t 1 /nobreak > nul
+echo [*] Adding Local Node...
+start "BlockDrive-Node" /min cmd /c "cd /d %~dp0 && cd ..\secure-storage-main && python smart_node.py Host-Node http://localhost:8000"
 
+:: 3. Start UI and Browser
+timeout /t 1 /nobreak > nul
+echo [*] Launching Dashboard...
 echo.
 echo ============================================
-echo   BlockDrive HUB is RUNNING!
+echo   DONE! Opening http://localhost:8501 now.
 echo ============================================
 echo.
-echo   [YOUR MACHINE]  : http://localhost:8501
-echo   [OTHER DEVICES] : http://%LOCAL_IP%:8501
-echo.
-echo   Backend API     : http://%LOCAL_IP%:8000
-echo.
-echo ============================================
-echo   HOW TO ADD MORE DEVICES (up to 5 nodes):
-echo ============================================
-echo.
-echo   On each OTHER laptop/device on same WiFi:
-echo   1. Copy the "secure-storage-main" folder
-echo   2. Install: pip install requests cryptography
-echo   3. Double-click "join_network.bat"
-echo   4. Enter this Hub IP when asked: %LOCAL_IP%
-echo.
-echo   They will appear on the dashboard instantly!
-echo ============================================
-echo.
-pause
+start "BlockDrive-UI" cmd /c "cd /d %~dp0 && set BACKEND_URL=http://%LOCAL_IP%:8000 && streamlit run frontend.py --server.port 8501 --server.address 0.0.0.0 --browser.serverAddress localhost"
+
+timeout /t 5 > nul
+exit

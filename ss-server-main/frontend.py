@@ -28,12 +28,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 import secrets
 
 # Generate Cryptographic Keys for User Identity
-if 'private_key' not in st.session_state:
-    st.session_state['private_key'] = secrets.token_hex(32)
-
-private_key = st.session_state['private_key']
-# Derived Public Key acts as the Owner ID securely
-public_key = "0x" + hashlib.sha256(private_key.encode()).hexdigest()[:16]
+# User Identity is handled dynamically in the sidebar block below.
 
 with st.sidebar:
     st.header("⚙️ System Config")
@@ -43,18 +38,31 @@ with st.sidebar:
         default_url = "http://localhost:8000" # Defaults to local hub
     
     api_base = st.text_input("Hub API URL", default_url, help="The address of the central hub. Change this if you deploy to a new URL.")
-    API_URL = f"{api_base}/api"
+    # Sanitize the URL to remove accidental spaces or trailing slashes
+    API_URL = f"{api_base.strip().rstrip('/')}/api"
+
+    st.divider()
+
+# ── USER IDENTITY ──
+with st.sidebar:
+    st.header("👤 Your Profile")
+    default_user = "Member"
+    username = st.text_input("Username", value=default_user, help="Enter your name.")
+    
+    # LOGIC: Combine Username + Hostname to ensure ID is unique even if names are same
+    # This prevents 'Hemanth' on Laptop A from seeing 'Hemanth' on Laptop B's data
+    unique_seed = f"{username}_{socket.gethostname()}"
+    public_key = hashlib.sha256(unique_seed.encode()).hexdigest()[:16]
+    
+    st.markdown(f"**Your Node ID:** `{public_key}`")
+    st.markdown(f"*Device ID: {socket.gethostname()}*")
     
     st.divider()
-    
-    st.header("👤 Cryptographic Identity")
-    node_id_input = st.text_input("Your Public ID", public_key, disabled=True, help="Your deterministic public key that identifies you securely on the network.")
-    st.text_input("Your Private Key (Hidden)", value="*****************", type="password", help="Your private key used to sign transactions. DO NOT SHARE.")
-    
-    st.divider()
-    if st.button("🔄 Sync Ledger", help="Force your local view to match the global blockchain."):
+    if st.button("Sync Ledger"):
+        st.info("Re-syncing with distributed network...")
         requests.get(f"{API_URL}/validate")
         st.success("Ledger Syncing...")
+        st.rerun()
 
 
 # Custom CSS for Modern 2026 Dark Theme (Deep Navy & Electric Cyan)
@@ -150,33 +158,30 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────
-VAULT_FILE = "my_vault.json"
+# ── HELPERS ──
+# Dynamic vault names per session
+UPLOAD_VAULT = f"uploads_{public_key}.json"
+UNLOCKED_VAULT = f"unlocked_{public_key}.json"
 
-def save_to_vault(file_name, file_hash, key):
-    """Save file credentials to a local JSON vault"""
+def save_to_uploads(file_name, file_hash, key):
+    """Save user's own uploads"""
     vault = {}
-    if os.path.exists(VAULT_FILE):
+    if os.path.exists(UPLOAD_VAULT):
         try:
-            with open(VAULT_FILE, "r") as f:
-                vault = json.load(f)
+            with open(UPLOAD_VAULT, "r") as f: vault = json.load(f)
         except: pass
-    
-    vault[file_hash] = {"name": file_name, "key": key, "date": time.strftime("%Y-%m-%d %H:%M")}
-    with open(VAULT_FILE, "w") as f:
-        json.dump(vault, f)
+    vault[file_hash] = {"name": file_name, "key": key, "date": time.strftime("%H:%M")}
+    with open(UPLOAD_VAULT, "w") as f: json.dump(vault, f)
 
-def get_from_vault(file_hash):
-    """Retrieve credentials from local vault"""
-    if os.path.exists(VAULT_FILE):
+def save_to_unlocked(file_name, file_hash, key):
+    """Save files unlocked via code"""
+    vault = {}
+    if os.path.exists(UNLOCKED_VAULT):
         try:
-            with open(VAULT_FILE, "r") as f:
-                vault = json.load(f)
-                return vault.get(file_hash)
+            with open(UNLOCKED_VAULT, "r") as f: vault = json.load(f)
         except: pass
-    return None
+    vault[file_hash] = {"name": file_name, "key": key, "date": time.strftime("%H:%M")}
+    with open(UNLOCKED_VAULT, "w") as f: json.dump(vault, f)
 
 def get_system_status():
     try:
@@ -302,45 +307,9 @@ with left_panel:
         </div>
         """, unsafe_allow_html=True)
 
-with right_panel:
-    st.subheader("⛓️ Public File History")
-    try:
-        r_chain = requests.get(f"{API_URL}/chain")
-        r_shared = requests.get(f"{API_URL}/drive/list_shared") # New: Get all shared hashes
-        
-        if r_chain.status_code == 200:
-            chain_data = r_chain.json()
-            shared_hashes = r_shared.json().get("shared_hashes", []) if r_shared.status_code == 200 else []
-            
-            # Get unique files from the chain
-            files = {}
-            for block in chain_data.get("chain", []):
-                for tx in block.get("transactions", []):
-                    files[tx['file_hash']] = tx
-            
-            if not files:
-                st.info("No files recorded on the ledger yet.")
-            else:
-                for f_hash, f_meta in list(files.items())[::-1]: # Latest first
-                    with st.container():
-                        is_shared = f_hash in shared_hashes
-                        badge = f'<span style="color:var(--electric-cyan); font-size: 0.8rem; border: 1px solid var(--electric-cyan); border-radius: 4px; padding: 2px 6px;">📂 SHARED</span>' if is_shared else f'<span style="color:var(--slate); font-size: 0.8rem; border: 1px solid var(--slate); border-radius: 4px; padding: 2px 6px;">🔒 PRIVATE</span>'
-                        
-                        st.markdown(f"""
-                        <div class="file-card">
-                            <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <span style="color:var(--white); font-weight:600;">📄 {f_meta['file_name']}</span>
-                                {badge}
-                            </div>
-                            <small class="text-muted">Owner: {f_meta['owner']} | Hash: {f_hash[:16]}...</small>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        if st.button(f"Manage File", key=f"manage_{f_hash}"):
-                            st.session_state['selected_file'] = f_meta
-                            st.rerun()
-
-    except Exception as e:
-        st.error(f"Failed to load chain: {e}")
+# ── MAIN DASHBOARD ──
+st.markdown("---")
+# Network Files section removed. Tabs are the primary interface.
 
 # If a file is selected, show its credentials in a nice modal-like view
 if 'selected_file' in st.session_state:
@@ -371,14 +340,48 @@ if 'selected_file' in st.session_state:
             st.rerun()
     with col_b:
         if vault_data:
-            if st.button("🚀 Download with Vault Key"):
-                # Logic to trigger download using vault data
-                st.session_state['dl_id_override'] = f['file_hash']
-                st.session_state['dl_key_override'] = vault_data['key']
-                st.info("Scroll down to the 'Download File' tab to complete the fetch!")
+            if st.button("🚀 Fast Decrypt & Download"):
+                with st.status("Fetching from Blockchain...", expanded=True) as status:
+                    try:
+                        # 1. Fetch metadata
+                        r = requests.get(f"{API_URL}/chain")
+                        chain_data = r.json()['chain']
+                        tx = next((t for b in reversed(chain_data) for t in b.get('transactions', []) if t.get('file_hash') == f['file_hash']), None)
+                        
+                        if tx:
+                            # 2. Download Chunks
+                            locations = tx.get('locations', {})
+                            encrypted_chunks = []
+                            status.update(label=f"Downloading {len(locations)} chunks from Nodes...")
+                            for chunk_name, node_info in sorted(locations.items()):
+                                chunk_data = http_relay_download(node_info, chunk_name)
+                                if chunk_data: encrypted_chunks.append(chunk_data)
+                                else: raise Exception(f"Missing chunk: {chunk_name}")
+                            
+                            # 3. Decrypt
+                            status.update(label="Decrypting with Vault Key...")
+                            fernet = Fernet(vault_data['key'].encode())
+                            decrypted_file = fernet.decrypt(b"".join(encrypted_chunks))
+                            
+                            st.session_state[f"dl_buffer_{f['file_hash']}"] = decrypted_file
+                            status.update(label="✅ Ready for Local Download!", state="complete")
+                        else:
+                            st.error("File metadata not found on ledger.")
+                    except Exception as e:
+                        st.error(f"Download failed: {e}")
+
+    # Show the final download button if decryption was successful
+    if f"dl_buffer_{f['file_hash']}" in st.session_state:
+        st.download_button(
+            label="💾 Save Decrypted File to PC",
+            data=st.session_state[f"dl_buffer_{f['file_hash']}"],
+            file_name=f['file_name'],
+            mime="application/octet-stream",
+            use_container_width=True
+        )
 
 # Bottom Panel: Event Logs
-st.subheader("� Real-time Distributed Events")
+st.subheader("⚡ Real-time Distributed Events")
 logs = status_data.get("logs", [])
 log_content = ""
 for entry in logs[::-1]: # Latest logs at top
@@ -392,12 +395,197 @@ st.markdown(f"""
 
 st.divider()
 
-# Existing Tabs (Upload/Download) moved below
-tab1, tab2, tab3 = st.tabs(["📤 Upload File", "📥 Download File", "🤝 Manage Sharing"])
+# Main Dashboard Tabs
+tab_share, tab_my_uploads, tab_unlocked, tab_upload, tab_code = st.tabs([
+    "🤝 Manage Sharing", 
+    "📁 My Uploads", 
+    "📂 Unlocked Drive", 
+    "📤 Upload File", 
+    "📥 Unlock with Code"
+])
+
+# ── 🤝 MANAGE SHARING TAB ──
+with tab_share:
+    st.header("Share Your Files")
+    st.markdown("Select files from your uploads to create a secure access code.")
+
+    vault = {}
+    if os.path.exists(UPLOAD_VAULT):
+        try:
+            with open(UPLOAD_VAULT, "r") as f: vault = json.load(f)
+        except:
+            st.warning("Could not read your local vault.")
+
+    if not vault:
+        st.info("Your local vault is empty. Upload a file first to be able to share it.")
+    else:
+        # Pre-resolve file names from the chain for better display
+        all_files_names = {}
+        try:
+            r_c = requests.get(f"{API_URL}/chain", timeout=2)
+            if r_c.status_code == 200:
+                for b in r_c.json().get('chain', []):
+                    for tx in b.get('transactions', []):
+                        all_files_names[tx['file_hash']] = tx['file_name']
+        except: pass
+
+        files_to_share = []
+        st.write("**Your Vault Files:**")
+        
+        # Create a form for selection
+        with st.form("share_form"):
+            for f_hash, f_meta in vault.items():
+                display_name = f_meta['name']
+                # If the name is generic, use the one from the blockchain
+                if "Shared File (" in display_name and f_hash in all_files_names:
+                    display_name = all_files_names[f_hash]
+
+                if st.checkbox(f"**{display_name}** (`{f_hash[:12]}...`)", key=f"share_cb_{f_hash}"):
+                    files_to_share.append({"hash": f_hash, "key": f_meta['key']})
+            
+            submitted = st.form_submit_button("Generate Access Code for Selected Files")
+
+            if submitted:
+                if not files_to_share:
+                    st.warning("Please select at least one file to share.")
+                else:
+                    payload = {
+                        "owner_id": public_key, # Use the new public_key (derived from username)
+                        "files": files_to_share
+                    }
+                    try:
+                        r = requests.post(f"{API_URL}/drive/generate_code", json=payload)
+                        if r.status_code == 200:
+                            access_code = r.json().get("access_code")
+                            st.success("✅ Access Code Generated!")
+                            st.markdown("Share this code with others:")
+                            st.code(access_code, language="")
+                        else:
+                            st.error(f"Failed to generate code: {r.text}")
+                    except Exception as e:
+                        st.error(f"Hub connection error: {e}")
+
+    st.divider()
+    st.header("Your Active Share Links")
+    if st.button("Refresh Links"):
+        st.rerun()
+
+    try:
+        r = requests.get(f"{API_URL}/drive/get_my_links?owner_id={public_key}") # Use the new public_key
+        if r.status_code == 200:
+            my_links = r.json().get("links", {})
+            if not my_links:
+                st.info("You have not generated any share links yet.")
+            else:
+                for code, files in my_links.items():
+                    with st.container():
+                        st.markdown(f"**Code:** `{code}`")
+                        st.markdown(f"*Grants access to {len(files)} file(s).*")
+                        if st.button("Revoke this Code", key=f"revoke_{code}"):
+                            payload = {"owner_id": public_key, "access_code": code} # Use the new public_key
+                            try:
+                                revoke_r = requests.post(f"{API_URL}/drive/revoke_code", json=payload)
+                                if revoke_r.status_code == 200:
+                                    st.success(f"Code {code[:8]}... has been revoked.")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Failed to revoke: {revoke_r.text}")
+                            except Exception as e:
+                                st.error(f"Hub error: {e}")
+                        st.markdown("---")
+        else:
+            st.error("Could not fetch your links from the hub.")
+    except Exception as e:
+        st.error(f"Hub connection error: {e}")
+
+# ── 📁 MY UPLOADS ──
+with tab_my_uploads:
+    st.header("Your Uploaded Files")
+    st.markdown("These are files you sharded and distributed to the network.")
+    
+    my_vault = {}
+    if os.path.exists(UPLOAD_VAULT):
+        try:
+            with open(UPLOAD_VAULT, "r") as f: my_vault = json.load(f)
+        except: pass
+
+    if not my_vault:
+        st.info("No personal uploads yet.")
+    else:
+        for f_hash, f_meta in my_vault.items():
+            with st.container():
+                st.markdown(f"""
+                <div style="background: rgba(100, 255, 218, 0.05); padding: 12px; border-radius: 8px; border-left: 3px solid var(--electric-cyan); margin-bottom: 8px;">
+                    <b style="color:white;">📄 {f_meta['name']}</b><br>
+                    <code style="color:var(--slate); font-size: 0.75rem;">ID: {f_hash[:16]}...</code>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                if st.button(f"🚀 Prepare {f_meta['name']}", key=f"my_dl_{f_hash}"):
+                    with st.status("Fetching...") as status:
+                        try:
+                            r = requests.get(f"{API_URL}/chain")
+                            tx = next((t for b in reversed(r.json()['chain']) for t in b.get('transactions', []) if t.get('file_hash') == f_hash), None)
+                            if tx:
+                                shards = []
+                                for c_name, n_info in sorted(tx['locations'].items()):
+                                    data = http_relay_download(n_info, c_name)
+                                    if data: shards.append(data)
+                                fernet = Fernet(f_meta['key'].encode())
+                                decrypted = fernet.decrypt(b"".join(shards))
+                                st.session_state[f"buf_{f_hash}"] = decrypted
+                                status.update(label="✅ Ready!", state="complete")
+                        except: st.error("Failed.")
+                
+                if f"buf_{f_hash}" in st.session_state:
+                    st.download_button("💾 Save to PC", st.session_state[f"buf_{f_hash}"], file_name=f_meta['name'], key=f"my_save_btn_{f_hash}")
+
+# ── 📂 UNLOCKED DRIVE ──
+with tab_unlocked:
+    st.header("Unlocked Data (From Others)")
+    st.markdown("Files shared by friends that you successfully unlocked.")
+    
+    unl_vault = {}
+    if os.path.exists(UNLOCKED_VAULT):
+        try:
+            with open(UNLOCKED_VAULT, "r") as f: unl_vault = json.load(f)
+        except: pass
+
+    if not unl_vault:
+        st.info("No unlocked files yet. Enter a code in the 'Unlock' tab.")
+    else:
+        for f_hash, f_meta in unl_vault.items():
+            with st.container():
+                st.markdown(f"""
+                <div style="background: rgba(87, 86, 213, 0.1); padding: 12px; border-radius: 8px; border-left: 3px solid #5756d5; margin-bottom: 8px;">
+                    <b style="color:white;">🔓 {f_meta['name']}</b><br>
+                    <code style="color:var(--slate); font-size: 0.75rem;">ID: {f_hash[:16]}...</code>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                if st.button(f"🚀 Prepare Shared {f_meta['name']}", key=f"unl_dl_{f_hash}"):
+                    with st.status("Fetching...") as status:
+                        try:
+                            r = requests.get(f"{API_URL}/chain")
+                            tx = next((t for b in reversed(r.json()['chain']) for t in b.get('transactions', []) if t.get('file_hash') == f_hash), None)
+                            if tx:
+                                shards = []
+                                for c_name, n_info in sorted(tx['locations'].items()):
+                                    data = http_relay_download(n_info, c_name)
+                                    if data: shards.append(data)
+                                fernet = Fernet(f_meta['key'].encode())
+                                decrypted = fernet.decrypt(b"".join(shards))
+                                st.session_state[f"ubuf_{f_hash}"] = decrypted
+                                status.update(label="✅ Ready!", state="complete")
+                        except: st.error("Failed.")
+                
+                if f"ubuf_{f_hash}" in st.session_state:
+                    st.download_button("💾 Download to PC", st.session_state[f"ubuf_{f_hash}"], file_name=f_meta['name'], key=f"unl_save_btn_{f_hash}")
 
 # ── UPLOAD TAB ──
-with tab1:
-    st.header("Upload File (Sign Transaction)")
+with tab_upload:
+    st.header("Secure Data Fragment Upload")
+    st.markdown("Upload a file to shard and distribute it across the peer network.")
     uploaded_file = st.file_uploader("Choose a file", type=None)
     owner_name = st.text_input("Signer (Public Key)", public_key, disabled=True)
     
@@ -457,15 +645,15 @@ with tab1:
                         "file_hash": merkle_root,
                         "file_name": original_name,
                         "locations": location_map,
-                        "node_id": node_id_input,
+                        "node_id": public_key, # Use the new public_key
                         "timestamp": status_data.get("lamport_clock", 0)
                     }
                     
                     try:
                         r = requests.post(f"{API_URL}/add_transaction", json=payload)
                         if r.status_code == 201:
-                            # Save to local vault for auto-fill later
-                            save_to_vault(original_name, merkle_root, key.decode())
+                            # Save to UPLOADS vault (your own files)
+                            save_to_uploads(original_name, merkle_root, key.decode())
                             
                             status.success("✅ File Uploaded & Transaction Recorded! Dashboard will refresh in 5 seconds.")
                             st.markdown(f"""
@@ -490,190 +678,34 @@ with tab1:
                     except Exception as e:
                         st.error(f"❌ API connection failed: {e}")
 
-# ── DOWNLOAD TAB ──
-with tab2:
-    st.header("Download File")
-
-    st.subheader("1. Unlock with Access Code")
-    access_code_input = st.text_input("Enter a shareable access code to unlock files")
-    if st.button("Unlock Files"):
-        if access_code_input:
-            payload = {"access_code": access_code_input}
+# ── 📥 UNLOCK WITH CODE TAB ──
+with tab_code:
+    st.header("Unlock Shared Data")
+    st.markdown("Paste a friend's code to add their shared files to your Unlocked Drive.")
+    code_in = st.text_input("Access Code", placeholder="XXXX-XXXX")
+    if st.button("Authenticate & Unlock"):
+        if code_in:
+            success_unl = False
             try:
-                r = requests.post(f"{API_URL}/drive/unlock", json=payload)
+                r = requests.post(f"{API_URL}/drive/unlock", json={"access_code": code_in})
                 if r.status_code == 200:
-                    unlocked_data = r.json()
-                    unlocked_keys = unlocked_data.get("keys", {})
-                    st.success(f"✅ Unlocked {len(unlocked_keys)} file(s)!")
-                    
-                    for f_hash, key in unlocked_keys.items():
-                        save_to_vault(f"Shared File ({f_hash[:8]}...)", f_hash, key)
-                    
-                    st.info("Unlocked file keys have been added to your local vault. You can now download them using their File ID.")
-                    st.rerun()
+                    data = r.json().get("keys", {})
+                    for f_h, f_k in data.items():
+                        r_name = f"Shared File ({f_h[:8]})"
+                        try:
+                            meta = requests.get(f"{API_URL}/get_file/{f_h}").json()
+                            status_name = meta.get("file_name", r_name)
+                        except:
+                            status_name = r_name
+                        save_to_unlocked(status_name, f_h, f_k)
+                    success_unl = True
                 else:
-                    st.error("Invalid or expired access code.")
+                    st.error("Invalid Code.")
             except Exception as e:
-                st.error(f"Hub connection error: {e}")
-
-    st.divider()
-    
-    st.subheader("2. Download by ID & Key")
-    
-    # Check for overrides from the file manager
-    dl_id = st.session_state.get('dl_id_override', "")
-    dl_key = st.session_state.get('dl_key_override', "")
-
-    file_id_input = st.text_input("File ID (Merkle Root)", value=dl_id, key="dl_file_id")
-    key_input = st.text_input("Master Key", value=dl_key, key="dl_master_key", type="password")
-
-    if st.button("Download & Decrypt"):
-        if not file_id_input or not key_input:
-            st.error("Please provide both File ID and Master Key.")
-        else:
-            with st.spinner("Processing..."):
-                try:
-                    # 1. Find transaction on the blockchain
-                    st.write("Fetching file metadata from ledger...")
-                    r = requests.get(f"{API_URL}/chain")
-                    r.raise_for_status()
-                    chain_data = r.json()['chain']
-                    
-                    tx = None
-                    file_name = "downloaded_file"
-                    for block in reversed(chain_data):
-                        for t in block.get('transactions', []):
-                            if t.get('file_hash') == file_id_input:
-                                tx = t
-                                file_name = t.get('file_name', file_name)
-                                break
-                        if tx: break
-
-                    if not tx:
-                        st.error("File ID not found on the ledger.")
-                    else:
-                        # 2. Download chunks
-                        locations = tx.get('locations', {})
-                        encrypted_chunks = []
-                        st.write(f"Downloading {len(locations)} chunks from storage nodes...")
-                        progress_bar = st.progress(0)
-                        
-                        sorted_locations = sorted(locations.items())
-
-                        for i, (chunk_name, node_info) in enumerate(sorted_locations):
-                            chunk_data = http_relay_download(node_info, chunk_name)
-                            if chunk_data:
-                                encrypted_chunks.append(chunk_data)
-                            else:
-                                st.error(f"Failed to download chunk: {chunk_name}")
-                                encrypted_chunks = [] # Invalidate download
-                                break
-                            progress_bar.progress((i + 1) / len(locations))
-
-                        if encrypted_chunks:
-                            # 3. Reassemble and decrypt
-                            st.write("Reassembling and decrypting file...")
-                            encrypted_file = b"".join(encrypted_chunks)
-                            try:
-                                fernet = Fernet(key_input.encode())
-                                decrypted_file = fernet.decrypt(encrypted_file)
-                                st.success("✅ Decryption successful!")
-                                
-                                st.download_button(
-                                    label="📥 Download Decrypted File",
-                                    data=decrypted_file,
-                                    file_name=file_name,
-                                    mime="application/octet-stream"
-                                )
-                                # Clear overrides after use
-                                if 'dl_id_override' in st.session_state: del st.session_state['dl_id_override']
-                                if 'dl_key_override' in st.session_state: del st.session_state['dl_key_override']
-                                st.rerun()
-
-                            except Exception as e:
-                                st.error(f"Decryption failed. The key may be incorrect or the file is corrupt. Error: {e}")
-                
-                except Exception as e:
-                    st.error(f"An error occurred during download: {e}")
-
-# ── MANAGE SHARING TAB ──
-with tab3:
-    st.header("Generate a Shareable Access Code")
-    st.markdown("Select files from your local vault to bundle into a single, secure access code. Anyone with this code can download the selected files.")
-
-    vault = {}
-    if os.path.exists(VAULT_FILE):
-        try:
-            with open(VAULT_FILE, "r") as f:
-                vault = json.load(f)
-        except:
-            st.warning("Could not read your local vault.")
-
-    if not vault:
-        st.info("Your local vault is empty. Upload a file first to be able to share it.")
-    else:
-        files_to_share = []
-        st.write("**Your Vault Files:**")
-        
-        # Create a form for selection
-        with st.form("share_form"):
-            for f_hash, f_meta in vault.items():
-                if st.checkbox(f"**{f_meta['name']}** (`{f_hash[:12]}...`)", key=f"share_cb_{f_hash}"):
-                    files_to_share.append({"hash": f_hash, "key": f_meta['key']})
+                st.error(f"Hub Error: {e}")
             
-            submitted = st.form_submit_button("Generate Access Code for Selected Files")
-
-            if submitted:
-                if not files_to_share:
-                    st.warning("Please select at least one file to share.")
-                else:
-                    payload = {
-                        "owner_id": node_id_input,
-                        "files": files_to_share
-                    }
-                    try:
-                        r = requests.post(f"{API_URL}/drive/generate_code", json=payload)
-                        if r.status_code == 200:
-                            access_code = r.json().get("access_code")
-                            st.success("✅ Access Code Generated!")
-                            st.markdown("Share this code with others:")
-                            st.code(access_code, language="")
-                        else:
-                            st.error(f"Failed to generate code: {r.text}")
-                    except Exception as e:
-                        st.error(f"Hub connection error: {e}")
-
-    st.divider()
-    st.header("Your Active Share Links")
-    if st.button("Refresh Links"):
-        st.rerun()
-
-    try:
-        r = requests.get(f"{API_URL}/drive/get_my_links?owner_id={node_id_input}")
-        if r.status_code == 200:
-            my_links = r.json().get("links", {})
-            if not my_links:
-                st.info("You have not generated any share links yet.")
-            else:
-                for code, files in my_links.items():
-                    with st.container():
-                        st.markdown(f"**Code:** `{code}`")
-                        st.markdown(f"*Grants access to {len(files)} file(s).*")
-                        if st.button("Revoke this Code", key=f"revoke_{code}"):
-                            payload = {"owner_id": node_id_input, "access_code": code}
-                            try:
-                                revoke_r = requests.post(f"{API_URL}/drive/revoke_code", json=payload)
-                                if revoke_r.status_code == 200:
-                                    st.success(f"Code {code[:8]}... has been revoked.")
-                                    st.rerun()
-                                else:
-                                    st.error(f"Failed to revoke: {revoke_r.text}")
-                            except Exception as e:
-                                st.error(f"Hub error: {e}")
-                        st.markdown("---")
-        else:
-            st.error("Could not fetch your links from the hub.")
-    except Exception as e:
-        st.error(f"Hub connection error: {e}")
-
-
+            if success_unl:
+                st.success("✅ Files added to your Unlocked Drive!")
+                time.sleep(1)
+                st.rerun()
+# End of Unlock with Code
