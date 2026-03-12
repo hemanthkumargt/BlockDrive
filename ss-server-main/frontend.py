@@ -41,6 +41,17 @@ with st.sidebar:
     # Sanitize the URL to remove accidental spaces or trailing slashes
     API_URL = f"{api_base.strip().rstrip('/')}/api"
 
+    # EXTRA: Network Discovery Helper
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        st.info(f"🌐 **Network Connect Code:**\n`{local_ip}`")
+        st.caption("Ask your friends to enter this IP when they join as storage nodes.")
+    except:
+        pass
+
     st.divider()
 
 # ── USER IDENTITY ──
