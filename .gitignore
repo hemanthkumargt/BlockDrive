@@ -17,3 +17,7 @@ error.txt
 # IDEs
 .vscode/
 .idea/
+
+# Local encryption vault — contains per-file decryption keys, NEVER commit
+my_vault.json
+**/my_vault.json
